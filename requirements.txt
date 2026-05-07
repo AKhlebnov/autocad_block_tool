@@ -1,0 +1,8 @@
+# Для работы с COM-объектами AutoCAD (win32com)
+pywin32
+
+# Для обработки данных и работы с CSV/Excel
+pandas
+
+# Для работы с файлами Excel формата .xlsx, .xlsm и другими
+openpyxl

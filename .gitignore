@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+*.csv
+camera_export_raw.csv
+camera_export_final.csv
+camera_import.csv
+dist/
+build/
+*.spec
+Тестовая среда.bak
