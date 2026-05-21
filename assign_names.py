@@ -2,35 +2,27 @@ import sys               # работа с системой: аргументы 
 import os                # пути к файлам и папкам
 import importlib.util    # динамическая загрузка модуля по произвольному пути (нужен для config.py рядом с exe)
 import pandas as pd      # таблицы (DataFrame) — сортировка, фильтрация, группировка
-import pythoncom
+import pythoncom         # для инициализации COM в потоках (нужно при вызове из GUI)
+import time
 import win32com.client   # доступ к COM-объектам Windows, в частности к AutoCAD
 from win32com.client import VARIANT  # особый тип данных COM для массивов атрибутов
 
 # ------------------------------------------------------------
-# 1. Динамическая загрузка config (чтобы работало в EXE)
-# ------------------------------------------------------------
-if getattr(sys, 'frozen', False):
-    # Программа собрана в exe — ищем config.py рядом с exe-файлом
-    application_path = os.path.dirname(sys.executable)
-else:
-    # Запуск из исходного кода — берём папку текущего скрипта
-    application_path = os.path.dirname(os.path.abspath(__file__))
-
-config_path = os.path.join(application_path, 'config.py')
-spec = importlib.util.spec_from_file_location("config", config_path)
-config = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(config)   # теперь config доступен как модуль
-
-# ------------------------------------------------------------
 # 2. Вспомогательная функция для получения доступных портов
 # ------------------------------------------------------------
-def get_available_ports(cabinet, panel_number, allowed_ports):
+def get_available_ports(cabinet, panel_number, allowed_ports, skip_ports_dict):
     """
     Возвращает список портов для указанного шкафа и панели,
     исключая порты, заданные в SKIP_PORTS.
     Поддерживает одиночные порты и диапазоны (кортежи/списки из двух чисел).
+
+    Параметры:
+        cabinet (str) – имя шкафа
+        panel_number (int) – номер патч-панели
+        allowed_ports (list[int]) – список всех разрешённых портов для одной панели
+        skip_ports_dict (dict) – словарь пропусков (config.SKIP_PORTS)
     """
-    skip_list_raw = config.SKIP_PORTS.get((cabinet, panel_number), [])
+    skip_list_raw = skip_ports_dict.get((cabinet, panel_number), [])
     skip_ports = set()
     for item in skip_list_raw:
         if isinstance(item, (tuple, list)) and len(item) == 2:
@@ -44,8 +36,23 @@ def get_available_ports(cabinet, panel_number, allowed_ports):
     return [p for p in allowed_ports if p not in skip_ports]
 
 def main(wait_for_exit=True):
-    # Инициализируем COM для этого потока
+    """
+    Основная функция экспорта и расчёта имён.
+    wait_for_exit – если True, в конце будет ожидание нажатия Enter (для консольного режима).
+    """
+    # Динамическая загрузка config (свежая из файла) – чтобы каждый раз читать актуальные настройки
+    if getattr(sys, 'frozen', False):
+        application_path = os.path.dirname(sys.executable)
+    else:
+        application_path = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(application_path, 'config.py')
+    spec = importlib.util.spec_from_file_location("config", config_path)
+    config = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config)
+
+    # Инициализируем COM для этого потока (необходимо при вызове из GUI)
     pythoncom.CoInitialize()
+    start_time = time.time()
     try:
         # ------------------------------------------------------------
         # 3. Подключение к AutoCAD
@@ -58,6 +65,8 @@ def main(wait_for_exit=True):
         # 4. Настройки из config
         # ------------------------------------------------------------
         BLOCK_NAME = config.BLOCK_NAME
+        # Формируем префикс для имён файлов на основе имени блока
+        FILE_PREFIX = BLOCK_NAME   # например, "camera", "WiFi" или "SOCKET_1P"
         TAG_CABINET = config.TAG_CABINET   # атрибут, где временно хранится имя шкафа
         TAG_FLOOR = config.TAG_FLOOR       # атрибут, где временно хранится номер этажа
         TAG_NAME = config.TAG_NAME         # итоговый атрибут с именем камеры
@@ -65,11 +74,35 @@ def main(wait_for_exit=True):
         NAME_FORMAT = config.NAME_FORMAT   # шаблон имени, например "{cabinet}/{panel:02d}.{port}"
         SORT_BY = config.SORT_BY           # колонки для сортировки
         SORT_ASCENDING = config.SORT_ASCENDING   # порядок сортировки (True/False)
+        SKIP_PORTS_DICT = config.SKIP_PORTS      # словарь пропусков портов
+
+        print("Загруженные пропуски портов (SKIP_PORTS_DICT):")
+        if SKIP_PORTS_DICT:
+            for key, value in SKIP_PORTS_DICT.items():
+                print(f"  {key} -> {value}")
+        else:
+            print("Пропуски портов отсутствуют.")
 
         # Формируем плоский список всех допустимых портов для одной панели
+        # PORT_RANGES может содержать как числа, так и списки [start, end]
         ALLOWED_PORTS = []
         for r in PORT_RANGES:
-            ALLOWED_PORTS.extend(r)
+            if isinstance(r, (list, tuple)) and len(r) == 2:
+                if r[0] == r[1]:
+                    # одиночный порт, представленный как [19,19]
+                    ALLOWED_PORTS.append(r[0])
+                else:
+                    # диапазон
+                    ALLOWED_PORTS.extend(range(r[0], r[1] + 1))
+            elif isinstance(r, int):
+                # уже число
+                ALLOWED_PORTS.append(r)
+            else:
+                # на случай, если r — что-то другое (попробуем преобразовать)
+                try:
+                    ALLOWED_PORTS.append(int(r))
+                except:
+                    pass
 
         # ------------------------------------------------------------
         # 5. Сбор данных из чертежа
@@ -129,7 +162,7 @@ def main(wait_for_exit=True):
 
         df = pd.DataFrame(data)
         print(f"Экспортировано блоков: {len(df)}")
-        df.to_csv('camera_export_raw.csv', index=False, encoding='utf-8-sig')
+        # df.to_csv(f'{FILE_PREFIX}_export_raw.csv', index=False, encoding='utf-8-sig')
 
         # ------------------------------------------------------------
         # 6. Очистка и фильтрация
@@ -139,7 +172,7 @@ def main(wait_for_exit=True):
         # Преобразуем этаж в число (если не число -> NaN)
         df[TAG_FLOOR] = pd.to_numeric(df[TAG_FLOOR], errors='coerce')
         df = df.dropna(subset=[TAG_FLOOR])
-        df[TAG_FLOOR] = df[TAG_FLOOR].astype(int)
+        # НЕ приводим к int, чтобы можно было использовать дробные этажи (например, 1.5)
         print(f"После фильтрации (есть шкаф и этаж) осталось блоков: {len(df)}")
 
         # ------------------------------------------------------------
@@ -176,7 +209,7 @@ def main(wait_for_exit=True):
             ranges.append(f"{start}-{end}" if start != end else str(start))
             return f" (пропущены {','.join(ranges)})"
 
-        def check_cabinet_capacity(cabinet, num_cameras, max_panels, allowed_ports):
+        def check_cabinet_capacity(cabinet, num_cameras, max_panels, allowed_ports, skip_ports_dict):
             """
             Проверяет, хватит ли портов в шкафу с учётом пропусков и максимального числа панелей.
             Возвращает (enough, total_ports, details)
@@ -187,7 +220,7 @@ def main(wait_for_exit=True):
             total_ports = 0
             details = []
             for panel in range(1, max_panels + 1):
-                available = get_available_ports(cabinet, panel, allowed_ports)
+                available = get_available_ports(cabinet, panel, allowed_ports, skip_ports_dict)
                 num_ports = len(available)
                 total_ports += num_ports
                 skip_str = get_skipped_ports_string(allowed_ports, available)
@@ -201,16 +234,16 @@ def main(wait_for_exit=True):
         # Предварительная проверка для каждого шкафа (до основного цикла)
         for cabinet, group in df_sorted.groupby(TAG_CABINET):
             num_cameras = len(group)
-            enough, total_ports, details = check_cabinet_capacity(cabinet, num_cameras, MAX_PANELS, ALLOWED_PORTS)
+            enough, total_ports, details = check_cabinet_capacity(cabinet, num_cameras, MAX_PANELS, ALLOWED_PORTS, SKIP_PORTS_DICT)
             if not enough:
                 print(f"\n❌ Шкаф {cabinet}:")
-                print(f"   Камер: {num_cameras}, доступно портов: {total_ports} (при макс. {MAX_PANELS} панелях).")
+                print(f"   Устройств: {num_cameras}, доступно портов: {total_ports} (при макс. {MAX_PANELS} панелях).")
                 print("   Детали по панелям:")
                 for d in details:
                     print(d)
                 print("\n   Решения:")
                 print("   - Увеличьте MAX_PANELS_PER_CABINET в config.py, если в шкафу реально больше панелей.")
-                print(f"   - Перенесите {num_cameras - total_ports} камер в другой шкаф.")
+                print(f"   - Перенесите {num_cameras - total_ports} устройств в другой шкаф.")
                 print("   - Проверьте пропуски портов (SKIP_PORTS).\n")
                 if wait_for_exit:
                     input("\nНажмите Enter для выхода...")
@@ -222,7 +255,7 @@ def main(wait_for_exit=True):
             panel_number = 1
             # Поиск первой панели с портами
             while True:
-                available_ports = get_available_ports(cabinet, panel_number, ALLOWED_PORTS)
+                available_ports = get_available_ports(cabinet, panel_number, ALLOWED_PORTS, SKIP_PORTS_DICT)
                 if available_ports:
                     break
                 panel_number += 1
@@ -237,7 +270,7 @@ def main(wait_for_exit=True):
                     port_index = 0
                     # Ищем следующую панель с портами
                     while True:
-                        available_ports = get_available_ports(cabinet, panel_number, ALLOWED_PORTS)
+                        available_ports = get_available_ports(cabinet, panel_number, ALLOWED_PORTS, SKIP_PORTS_DICT)
                         if available_ports:
                             break
                         panel_number += 1
@@ -259,11 +292,14 @@ def main(wait_for_exit=True):
         # 9. Сохранение файла для импорта (только Handle и NAME)
         # ------------------------------------------------------------
         df_import = df_sorted[['Handle', TAG_NAME]].copy()
-        df_import.to_csv('camera_import.csv', index=False, encoding='utf-8-sig')
-        print("Файл для импорта сохранён как camera_import.csv")
+        df_import.to_csv(f'{FILE_PREFIX}_import.csv', index=False, encoding='utf-8-sig')
+        print(f"Файл для импорта сохранён как {FILE_PREFIX}_import.csv")
 
         # Для отладки – полный результат (со всеми временными колонками и координатами)
-        df_sorted.to_csv('camera_export_final.csv', index=False, encoding='utf-8-sig')
+        df_sorted.to_csv(f'{FILE_PREFIX}_export_final.csv', index=False, encoding='utf-8-sig')
+    
+        elapsed = time.time() - start_time
+        print(f"Общее время выполнения: {elapsed:.2f} сек")
 
     except Exception as e:
         # --- Обработка ошибок ---
