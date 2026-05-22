@@ -107,19 +107,43 @@ def run_threaded(func, on_done=None, *args, **kwargs):
 class AutoCADApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("AutoCAD Block Numbering Tool RWB")
+        self.root.title("AutoCAD Block Numbering Tool")
         self.root.geometry("900x750")
+        
+        # Определяем папку, где находится exe (или скрипт)
+        if getattr(sys, 'frozen', False):
+            base_path = os.path.dirname(sys.executable)
+        else:
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        
+        # Устанавливаем иконку окна (сначала пробуем PNG, потом ICO)
+        try:
+            icon_path = os.path.join(base_path, 'rwb.png')
+            self.icon_img = tk.PhotoImage(file=icon_path)  # сохраняем как атрибут
+            self.root.iconphoto(True, self.icon_img)
+        except:
+            try:
+                icon_path = os.path.join(base_path, 'rwb.ico')
+                self.root.iconbitmap(icon_path)
+            except:
+                pass  # иконка не найдена – работаем без неё
 
         # Загружаем оригинальный config
         global config
         import config as cfg
         config = cfg
-        # Сохраняем исходные значения (на случай, если понадобятся, но теперь не используем)
         self.original_config = {
             'BLOCK_NAME': config.BLOCK_NAME,
             'PORT_RANGES': config.PORT_RANGES,
             'SKIP_PORTS': config.SKIP_PORTS,
         }
+
+        # Создаём меню
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
+        about_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Справка", menu=about_menu)
+        about_menu.add_command(label="О программе", command=self.show_about)
 
         # Создаём вкладки
         self.notebook = ttk.Notebook(root)
@@ -135,16 +159,15 @@ class AutoCADApp:
 
         # --- Настройки ---
         # BLOCK_NAME
-        ttk.Label(self.settings_frame, text="Имя блока (BLOCK_NAME):").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.settings_frame, text="Имя блока:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.block_name_var = tk.StringVar(value=config.BLOCK_NAME)
         self.block_name_combo = ttk.Combobox(self.settings_frame, textvariable=self.block_name_var,
                                              values=["camera", "WiFi", "SOCKET_1P"], state="normal")
         self.block_name_combo.grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
 
         # PORT_RANGES
-        ttk.Label(self.settings_frame, text="Диапазоны портов (PORT_RANGES):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.settings_frame, text="Диапазоны портов:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
         self.port_ranges_var = tk.StringVar()
-        # Преобразуем текущие PORT_RANGES в строку для отображения
         current_ranges = []
         for r in config.PORT_RANGES:
             if isinstance(r, (list, tuple)) and len(r) == 2:
@@ -153,7 +176,6 @@ class AutoCADApp:
                 else:
                     current_ranges.append(f"{r[0]}-{r[1]}")
             else:
-                # r — это число (одиночный порт)
                 current_ranges.append(str(r))
         self.port_ranges_var.set(','.join(current_ranges))
         self.port_ranges_combo = ttk.Combobox(self.settings_frame, textvariable=self.port_ranges_var,
@@ -162,11 +184,11 @@ class AutoCADApp:
         ttk.Label(self.settings_frame, text="Формат: 1-18,25-42 (диапазоны через запятую)").grid(row=2, column=1, sticky=tk.W, padx=5, pady=0)
 
         # SKIP_PORTS
-        ttk.Label(self.settings_frame, text="Пропуски портов (SKIP_PORTS):").grid(row=3, column=0, sticky=tk.NW, padx=5, pady=5)
+        ttk.Label(self.settings_frame, text="Пропуски портов:").grid(row=3, column=0, sticky=tk.NW, padx=5, pady=5)
         self.skip_ports_text = tk.Text(self.settings_frame, height=8, width=50)
         self.skip_ports_text.grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
 
-        # Создаём контекстное меню для поля ввода пропусков
+        # Контекстное меню для поля ввода пропусков
         self.skip_ports_menu = tk.Menu(self.skip_ports_text, tearoff=0)
         self.skip_ports_menu.add_command(label="Копировать", command=self._copy_from_skip_ports)
         self.skip_ports_menu.add_command(label="Вставить", command=self._paste_to_skip_ports)
@@ -178,7 +200,6 @@ class AutoCADApp:
         self.skip_ports_text.bind("<Control-v>", lambda e: self._paste_to_skip_ports())
         self.skip_ports_text.bind("<Control-c>", lambda e: self._copy_from_skip_ports())
 
-        # Заполняем текущими значениями
         self.skip_ports_text.insert(tk.END, format_skip_ports(config.SKIP_PORTS))
 
         # Пример формата SKIP_PORTS (выделяемый и копируемый)
@@ -187,15 +208,14 @@ class AutoCADApp:
         ttk.Label(example_frame, text="Формат: шкаф,номер_панели,порты\nПример (можно скопировать):").pack(anchor=tk.W)
         self.example_text = tk.Text(example_frame, height=3, width=50, wrap=tk.WORD, bg='lightyellow')
         self.example_text.insert(tk.END, "1-1.A09,1,25-34\n1-1.B13,2,25-30,40")
-        self.example_text.config(state=tk.DISABLED)  # запрещаем редактирование, но выделять можно
+        self.example_text.config(state=tk.DISABLED)
         self.example_text.pack(anchor=tk.W, pady=2)
 
-        # Контекстное меню для копирования текста примера
         example_menu = tk.Menu(self.example_text, tearoff=0)
         example_menu.add_command(label="Копировать", command=self._copy_example_text)
         self.example_text.bind("<Button-3>", lambda event: example_menu.post(event.x_root, event.y_root))
 
-        # Кнопка сохранения настроек в config.py (ручное сохранение)
+        # Кнопка сохранения настроек
         self.save_btn = ttk.Button(self.settings_frame, text="Сохранить настройки в config.py", command=self.save_settings)
         self.save_btn.grid(row=5, column=1, sticky=tk.W, padx=5, pady=10)
 
@@ -204,29 +224,40 @@ class AutoCADApp:
         btn_frame.pack(pady=10)
 
         self.btn_assign = tk.Button(btn_frame, text="1. Экспорт и расчёт имён", command=self.assign_names,
-                                    bg="lightblue", width=25)
+                                    bg="lightblue", width=25, relief=tk.RAISED, borderwidth=2)
         self.btn_assign.pack(side=tk.LEFT, padx=5)
 
         self.btn_import = tk.Button(btn_frame, text="2. Импорт в AutoCAD", command=self.import_attrs,
-                                    bg="lightgreen", width=25)
+                                    bg="lightgreen", width=25, relief=tk.RAISED, borderwidth=2)
         self.btn_import.pack(side=tk.LEFT, padx=5)
 
         self.btn_report = tk.Button(btn_frame, text="3. Сгенерировать отчёт", command=self.generate_report,
-                                    bg="lightyellow", width=25)
+                                    bg="lightyellow", width=25, relief=tk.RAISED, borderwidth=2)
         self.btn_report.pack(side=tk.LEFT, padx=5)
 
         # Область вывода логов
         self.log = scrolledtext.ScrolledText(self.run_frame, wrap=tk.WORD, width=80, height=30)
         self.log.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
-        self.log.bind("<Button-3>", self._show_context_menu)   # правая кнопка мыши
+        self.log.bind("<Button-3>", self._show_context_menu)
 
-        # Перенаправляем stdout/stderr
         sys.stdout = RedirectText(self.log)
         sys.stderr = RedirectText(self.log)
 
         # Прогресс-бар
         self.progress = ttk.Progressbar(self.run_frame, mode='indeterminate', length=400)
         self.progress.pack(pady=5)
+
+    # ------ Метод "О программе" ------
+    def show_about(self):
+        messagebox.showinfo(
+            "О программе",
+            "AutoCAD Block Numbering Tool\n"
+            "Версия 2.0\n"
+            "Разработано Александром Хлебновым\n"
+            "2026 г.\n\n"
+            "Инструмент для массовой маркировки блоков AutoCAD\n"
+            "с распределением портов на патч-панелях."
+        )
 
     # ------ Методы для работы с контекстным меню и буфером обмена ------
     def _copy_example_text(self):
@@ -277,13 +308,20 @@ class AutoCADApp:
         silent=True — не показывать всплывающее окно (используется при автоматическом сохранении).
         """
         try:
+                # Определяем папку, где находится исполняемый файл (при сборке) или скрипт (при разработке)
+            if getattr(sys, 'frozen', False):
+                # Запущено как exe
+                config_dir = os.path.dirname(sys.executable)
+            else:
+                # Запущено как скрипт
+                config_dir = os.path.dirname(os.path.abspath(__file__))
+            config_path = os.path.join(config_dir, 'config.py')
             new_block_name = self.block_name_var.get().strip()
             port_ranges_str = self.port_ranges_var.get().strip()
             new_port_ranges = parse_port_ranges(port_ranges_str)
             skip_text = self.skip_ports_text.get(1.0, tk.END)
             new_skip_ports = parse_skip_ports(skip_text)
 
-            config_path = os.path.join(os.path.dirname(__file__), 'config.py')
             with open(config_path, 'w', encoding='utf-8') as f:
                 f.write("# config.py – автоматически сохранён из GUI\n\n")
                 f.write(f"BLOCK_NAME = {repr(new_block_name)}\n\n")

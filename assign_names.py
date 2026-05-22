@@ -69,7 +69,7 @@ def main(wait_for_exit=True):
         FILE_PREFIX = BLOCK_NAME   # например, "camera", "WiFi" или "SOCKET_1P"
         TAG_CABINET = config.TAG_CABINET   # атрибут, где временно хранится имя шкафа
         TAG_FLOOR = config.TAG_FLOOR       # атрибут, где временно хранится номер этажа
-        TAG_NAME = config.TAG_NAME         # итоговый атрибут с именем камеры
+        TAG_NAME = config.TAG_NAME         # итоговый атрибут с именем устройства
         PORT_RANGES = config.PORT_RANGES   # допустимые диапазоны портов на одной панели
         NAME_FORMAT = config.NAME_FORMAT   # шаблон имени, например "{cabinet}/{panel:02d}.{port}"
         SORT_BY = config.SORT_BY           # колонки для сортировки
@@ -251,7 +251,7 @@ def main(wait_for_exit=True):
 
         # Основной цикл назначения панелей и портов (теперь мы уверены, что портов хватит)
         for cabinet, group in df_sorted.groupby(TAG_CABINET):
-            print(f"Обрабатывается шкаф: {cabinet}, камер: {len(group)}")
+            print(f"Обрабатывается шкаф: {cabinet}, устройств: {len(group)}")
             panel_number = 1
             # Поиск первой панели с портами
             while True:
@@ -286,7 +286,7 @@ def main(wait_for_exit=True):
                 port_index += 1
                 cameras_done += 1
 
-            print(f"  Последняя использованная панель: {panel_number}, всего камер: {total_cameras}")
+            print(f"  Последняя использованная панель: {panel_number}, всего устройств: {total_cameras}")
 
         # ------------------------------------------------------------
         # 9. Сохранение файла для импорта (только Handle и NAME)
