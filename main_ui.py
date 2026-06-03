@@ -252,7 +252,7 @@ class AutoCADApp:
         messagebox.showinfo(
             "О программе",
             "AutoCAD Block Numbering Tool\n"
-            "Версия 2.0\n"
+            "Версия 3.0\n"
             "Разработано Александром Хлебновым\n"
             "2026 г.\n\n"
             "Инструмент для массовой маркировки блоков AutoCAD\n"
