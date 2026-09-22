@@ -1,6 +1,6 @@
 # ============================================================
 #  main_ui.py – графический интерфейс программы нумерации.
-#  Версия 3.0
+#  Версия 4.0
 #  Работает с таблицей блоков, особым режимом, единым отчётом.
 #  Вкладка «Настройки» прокручивается.
 # ============================================================
@@ -97,7 +97,7 @@ def run_threaded(func, on_done=None, *args, **kwargs):
 class AutoCADApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("AutoCAD Block Numbering Tool RWB v3.0")
+        self.root.title("AutoCAD Block Numbering Tool RWB v4.0")
         self.root.geometry("1150x900")
 
         if getattr(sys, 'frozen', False):
@@ -439,7 +439,7 @@ class AutoCADApp:
         messagebox.showinfo(
             "О программе",
             "AutoCAD Block Numbering Tool\n"
-            "Версия 3.0\n"
+            "Версия 4.0\n"
             "Разработано Александром Хлебновым\n"
             "2026 г.\n\n"
             "Инструмент для массовой маркировки блоков AutoCAD\n"
@@ -504,7 +504,7 @@ class AutoCADApp:
             config_path = os.path.join(self.config_dir, 'config.py')
             with open(config_path, 'w', encoding='utf-8') as f:
                 f.write("# ============================================================\n")
-                f.write("#  config.py – настройки программы нумерации блоков (v3.0)\n")
+                f.write("#  config.py – настройки программы нумерации блоков (v4.0)\n")
                 f.write("#  Файл автоматически сохраняется при работе из GUI.\n")
                 f.write("# ============================================================\n\n")
                 f.write(f"TAG_CABINET = {repr(config.TAG_CABINET)}\n")

@@ -9,5 +9,9 @@ dist/
 build/
 *.spec
 Тестовая среда.bak
+*.bak
 *.dwl
 *.dwl2
+*.sv$
+*.tmp
+*.log
