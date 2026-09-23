@@ -1,11 +1,12 @@
 # ============================================================
 #  generate_report.py – построение отчёта в Excel.
-#  Версия 4.0
-#  Читает один общий export_final.csv и строит 4 листа:
+#  Версия 4.1
+#  Читает один общий export_final.csv и строит 5 листов:
 #    1. Сводка по шкафам
 #    2. Детали по панелям
 #    3. Порты (с автофильтром)
-#    4. Кабельный журнал (см. cable_journal.py)
+#    4. Кабельный журнал (cable_journal.py)
+#    5. Кроссировочная таблица (cross_table.py)
 # ============================================================
 
 import sys               # работа с системой
@@ -16,15 +17,16 @@ import pandas as pd      # для чтения CSV и записи Excel
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
-# Импортируем модуль кабельного журнала
+# Импортируем модули дополнительных листов
 from cable_journal import add_cable_journal_sheet
+from cross_table import add_cross_table_sheet
 
 
 # ------------------------------------------------------------
 # Константы оформления
 # ------------------------------------------------------------
 
-# Светло-голубой фон для шапок (приятный «акцентный» цвет Excel)
+# Светло-голубой фон для шапок (единый стиль для всех листов)
 HEADER_FILL = PatternFill(
     start_color="D9E1F2",
     end_color="D9E1F2",
@@ -39,13 +41,6 @@ HEADER_FILL = PatternFill(
 def apply_borders(ws, row_start, row_end, col_start, col_end):
     """
     Применяет тонкие границы ко всем ячейкам в указанном диапазоне.
-
-    Параметры:
-        ws        — рабочий лист openpyxl
-        row_start — первая строка (1-индексация)
-        row_end   — последняя строка (включительно)
-        col_start — первый столбец (1-индексация)
-        col_end   — последний столбец (включительно)
     """
     thin_border = Border(
         left=Side(style='thin'),
@@ -61,14 +56,7 @@ def apply_borders(ws, row_start, row_end, col_start, col_end):
 def style_header(ws, num_cols, header_row=1):
     """
     Оформляет заголовки таблицы:
-      - жирный шрифт,
-      - выравнивание по центру с переносом,
-      - светло-голубой фон.
-
-    Параметры:
-        ws          — рабочий лист
-        num_cols    — количество столбцов (ширина шапки)
-        header_row  — номер строки заголовка (по умолчанию 1)
+    жирный шрифт + по центру + светло-голубой фон.
     """
     for col_idx in range(1, num_cols + 1):
         cell = ws.cell(row=header_row, column=col_idx)
@@ -84,14 +72,7 @@ def auto_column_widths(ws, widths):
 
 
 def add_auto_filter(ws, num_cols, last_row):
-    """
-    Включает автофильтр на указанном листе.
-
-    Параметры:
-        ws        — рабочий лист
-        num_cols  — количество столбцов
-        last_row  — номер последней строки данных
-    """
+    """Включает автофильтр на листе."""
     last_col_letter = get_column_letter(num_cols)
     ws.auto_filter.ref = f"A1:{last_col_letter}{last_row}"
 
@@ -102,15 +83,11 @@ def add_auto_filter(ws, num_cols, last_row):
 
 def main(wait_for_exit=True):
     """
-    Основная функция отчёта:
-    - читает export_final.csv,
-    - строит листы «Сводка по шкафам», «Детали по панелям», «Порты»,
-    - добавляет лист «Кабельный журнал»,
-    - сохраняет результат в «Отчёт по проекту.xlsx».
+    Основная функция отчёта.
     """
     start_total = time.time()
 
-    # --- 1. Загрузка config (для порядка типов блоков) ---
+    # --- 1. Загрузка config (для порядка типов блоков и PoE) ---
     if getattr(sys, 'frozen', False):
         application_path = os.path.dirname(sys.executable)
     else:
@@ -121,8 +98,6 @@ def main(wait_for_exit=True):
     spec.loader.exec_module(config)
 
     # Словарь порядка типов блоков: {имя_блока: индекс}
-    # Нужен, чтобы сортировать «Тип оборудования» не по алфавиту,
-    # а по порядку из настроек (как в таблице GUI).
     order_map = {}
     idx = 0
     for b in getattr(config, "BLOCK_CONFIGS", []):
@@ -130,7 +105,6 @@ def main(wait_for_exit=True):
         if bname and bname not in order_map:
             order_map[bname] = idx
             idx += 1
-    # Добавляем блоки особого режима (после основных)
     if getattr(config, "SPECIAL_MODE_ENABLED", False):
         for name in getattr(config, "SPECIAL_BLOCK_NAMES", []):
             if name and name not in order_map:
@@ -138,7 +112,6 @@ def main(wait_for_exit=True):
                 idx += 1
 
     def type_order(dev_type):
-        """Возвращает порядковый номер типа блока для сортировки."""
         return order_map.get(dev_type, 999)
 
     # --- 2. Входной и выходной файлы ---
@@ -297,14 +270,12 @@ def main(wait_for_exit=True):
             # ----------------------------------------------------
             ws = writer.sheets["Сводка по шкафам"]
             auto_column_widths(ws, {
-                'A': 18,   # Шкаф
-                'B': 16,   # Всего устройств
-                'C': 24,   # Количество патч-панелей
-                'D': 75,   # Детали по панелям
+                'A': 18,
+                'B': 16,
+                'C': 24,
+                'D': 75,
             })
-            # Шапка со стилем (жирный + цвет + по центру)
             style_header(ws, num_cols=4)
-            # Данные: выравнивание
             for row_idx in range(2, len(df_summary) + 2):
                 for col_idx in (1, 2, 3):
                     ws.cell(row=row_idx, column=col_idx).alignment = Alignment(
@@ -320,11 +291,11 @@ def main(wait_for_exit=True):
             # ----------------------------------------------------
             ws = writer.sheets["Детали по панелям"]
             auto_column_widths(ws, {
-                'A': 18,   # Шкаф
-                'B': 14,   # Номер панели
-                'C': 30,   # Занятые порты
-                'D': 16,   # Количество портов
-                'E': 35,   # Тип оборудования
+                'A': 18,
+                'B': 14,
+                'C': 30,
+                'D': 16,
+                'E': 35,
             })
             style_header(ws, num_cols=5)
             for row_idx in range(2, len(df_detail) + 2):
@@ -343,12 +314,12 @@ def main(wait_for_exit=True):
             # ----------------------------------------------------
             ws = writer.sheets["Порты"]
             auto_column_widths(ws, {
-                'A': 18,   # Шкаф
-                'B': 10,   # Панель
-                'C': 10,   # Порт
-                'D': 10,   # Этаж
-                'E': 26,   # Оборудование
-                'F': 22,   # Тип оборудования
+                'A': 18,
+                'B': 10,
+                'C': 10,
+                'D': 10,
+                'E': 26,
+                'F': 22,
             })
             style_header(ws, num_cols=6)
             for row_idx in range(2, len(df_ports) + 2):
@@ -361,7 +332,7 @@ def main(wait_for_exit=True):
                         horizontal='left', vertical='center'
                     )
             apply_borders(ws, 1, len(df_ports) + 1, 1, 6)
-            # === АВТОФИЛЬТР на листе «Порты» ===
+            # Автофильтр на листе «Порты»
             add_auto_filter(ws, num_cols=6, last_row=len(df_ports) + 1)
 
             # ----------------------------------------------------
@@ -369,6 +340,11 @@ def main(wait_for_exit=True):
             # ----------------------------------------------------
             df_sorted = df.sort_values(by=["Шкаф", "Панель", "Порт"]).reset_index(drop=True)
             add_cable_journal_sheet(writer, df_sorted)
+
+            # ----------------------------------------------------
+            # 7.5. Лист «Кроссировочная таблица»
+            # ----------------------------------------------------
+            add_cross_table_sheet(writer, df, getattr(config, "BLOCK_CONFIGS", []))
 
         print(f"Отчёт сохранён в '{OUTPUT_EXCEL}'")
 

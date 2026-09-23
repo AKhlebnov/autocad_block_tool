@@ -1,8 +1,13 @@
 # ============================================================
 #  main_ui.py – графический интерфейс программы нумерации.
-#  Версия 4.0
-#  Работает с таблицей блоков, особым режимом, единым отчётом.
-#  Вкладка «Настройки» прокручивается.
+#  Версия 4.1
+#
+#  Что нового:
+#   • Таблица блоков (галочка, имя, отображаемое имя, диапазоны, PoE)
+#   • Особый режим с продолжением с последней панели
+#   • Расширенные настройки атрибутов (TAG_CABINET, TAG_FLOOR
+#     и т.д.) и шаблона имени (NAME_FORMAT) — редактируются из GUI
+#   • Автосохранение настроек при закрытии окна
 # ============================================================
 
 import sys
@@ -12,21 +17,25 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import io
 
+# Добавляем текущую папку в sys.path, чтобы импортировать наши модули
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import assign_names
 import import_attrs
 import generate_report
 
+# Глобальная ссылка на config (загружается при старте)
 config = None
 
 
 # ------------------------------------------------------------
-# Вспомогательные функции
+# Вспомогательные функции для парсинга и форматирования
 # ------------------------------------------------------------
 
 def parse_port_ranges(port_str):
-    """'1-18,25-42' -> [[1,18],[25,42]]"""
+    """
+    Преобразует строку '1-18,25-42' в список списков [[1,18],[25,42]].
+    """
     ranges = []
     for part in port_str.split(','):
         part = part.strip()
@@ -41,7 +50,9 @@ def parse_port_ranges(port_str):
 
 
 def format_port_ranges(ranges):
-    """[[1,18],[25,42]] -> '1-18,25-42'"""
+    """
+    Преобразует список [[1,18],[25,42]] в строку '1-18,25-42'.
+    """
     parts = []
     for r in ranges:
         if isinstance(r, (list, tuple)) and len(r) == 2:
@@ -55,7 +66,9 @@ def format_port_ranges(ranges):
 
 
 def parse_skip_ports_text(text):
-    """Многострочный текст -> список строк (без пустых и комментариев)."""
+    """
+    Преобразует многострочный текст в список строк (по одной на строку).
+    """
     result = []
     for line in text.splitlines():
         line = line.strip()
@@ -64,8 +77,11 @@ def parse_skip_ports_text(text):
     return result
 
 
+# ------------------------------------------------------------
+# Перенаправление stdout/stderr в виджет Text
+# ------------------------------------------------------------
+
 class RedirectText(io.StringIO):
-    """Перенаправление stdout/stderr в виджет Text."""
     def __init__(self, text_widget):
         super().__init__()
         self.text_widget = text_widget
@@ -76,8 +92,11 @@ class RedirectText(io.StringIO):
         self.text_widget.update_idletasks()
 
 
+# ------------------------------------------------------------
+# Запуск функции в отдельном потоке
+# ------------------------------------------------------------
+
 def run_threaded(func, on_done=None, *args, **kwargs):
-    """Запуск функции в отдельном потоке."""
     def wrapper():
         try:
             func(*args, **kwargs)
@@ -97,8 +116,8 @@ def run_threaded(func, on_done=None, *args, **kwargs):
 class AutoCADApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("AutoCAD Block Numbering Tool RWB v4.0")
-        self.root.geometry("1150x900")
+        self.root.title("AutoCAD Block Numbering Tool RWB v4.1")
+        self.root.geometry("1250x900")
 
         if getattr(sys, 'frozen', False):
             self.config_dir = os.path.dirname(sys.executable)
@@ -117,6 +136,7 @@ class AutoCADApp:
             except:
                 pass
 
+        # Загружаем config
         global config
         import config as cfg
         config = cfg
@@ -175,11 +195,23 @@ class AutoCADApp:
         self._build_settings_tab()
         self._build_run_tab()
 
+        # Перенаправляем stdout и stderr в лог
         sys.stdout = RedirectText(self.log)
         sys.stderr = RedirectText(self.log)
 
+        # Автосохранение при закрытии окна
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_close(self):
+        """Сохраняет настройки при закрытии окна, затем закрывает его."""
+        try:
+            self.save_settings(silent=True)
+        except:
+            pass
+        self.root.destroy()
+
     def _on_mousewheel(self, event):
-        """Прокрутка колёсиком мыши работает, только если мышь над вкладкой настроек."""
+        """Прокрутка колёсиком мыши только над вкладкой настроек."""
         try:
             x, y = self.root.winfo_pointerxy()
             widget = self.root.winfo_containing(x, y)
@@ -196,7 +228,7 @@ class AutoCADApp:
     # Вкладка «Настройки»
     # ------------------------------------------------------------
     def _build_settings_tab(self):
-        # --- Заголовок ---
+        # --- Заголовок «Список блоков» ---
         ttk.Label(self.settings_frame, text="Список блоков для обработки:",
                   font=('TkDefaultFont', 10, 'bold')).pack(anchor=tk.W, padx=5, pady=(10, 5))
 
@@ -208,8 +240,9 @@ class AutoCADApp:
         ttk.Label(self.table_frame, text="Имя блока", width=18).grid(row=0, column=1, padx=5, pady=4)
         ttk.Label(self.table_frame, text="Отображаемое имя", width=22).grid(row=0, column=2, padx=5, pady=4)
         ttk.Label(self.table_frame, text="Диапазоны портов", width=28).grid(row=0, column=3, padx=5, pady=4)
+        ttk.Label(self.table_frame, text="PoE", width=5).grid(row=0, column=4, padx=5, pady=4)
 
-        self.block_rows = []
+        self.block_rows = []  # кортеж: (enabled_var, name_var, display_var, port_var, poe_var)
         block_presets = ["camera", "AP", "Socket_1p", "Socket_RJ-45", ""]
         display_presets = ["Видеокамера", "Точка доступа Wi-Fi", "Розетка", "Разъём RJ-45", ""]
         port_presets = ["1-18,25-42", "19-23,43-47", "1-23,25-47"]
@@ -217,7 +250,7 @@ class AutoCADApp:
         block_configs = getattr(config, "BLOCK_CONFIGS", [])
         while len(block_configs) < 5:
             block_configs.append({"enabled": False, "block_name": "",
-                                  "display_name": "", "port_ranges": []})
+                                  "display_name": "", "port_ranges": [], "poe": False})
 
         for i in range(5):
             cfg = block_configs[i]
@@ -225,6 +258,7 @@ class AutoCADApp:
             name_var = tk.StringVar(value=cfg.get("block_name", ""))
             display_var = tk.StringVar(value=cfg.get("display_name", ""))
             port_var = tk.StringVar(value=format_port_ranges(cfg.get("port_ranges", [])))
+            poe_var = tk.BooleanVar(value=cfg.get("poe", False))
 
             tk.Checkbutton(self.table_frame, variable=enabled_var).grid(row=1+i, column=0, padx=5, pady=4)
             ttk.Combobox(self.table_frame, textvariable=name_var, values=block_presets,
@@ -233,12 +267,13 @@ class AutoCADApp:
                          width=20, state="normal").grid(row=1+i, column=2, padx=5, pady=4)
             ttk.Combobox(self.table_frame, textvariable=port_var, values=port_presets,
                          width=26, state="normal").grid(row=1+i, column=3, padx=5, pady=4)
+            tk.Checkbutton(self.table_frame, variable=poe_var).grid(row=1+i, column=4, padx=5, pady=4)
 
-            self.block_rows.append((enabled_var, name_var, display_var, port_var))
+            self.block_rows.append((enabled_var, name_var, display_var, port_var, poe_var))
 
         self.add_row_button = ttk.Button(self.table_frame, text="+ Добавить строку",
                                          command=self._add_block_row)
-        self.add_row_button.grid(row=1+len(self.block_rows), column=0, columnspan=4,
+        self.add_row_button.grid(row=1+len(self.block_rows), column=0, columnspan=5,
                                  sticky=tk.W, padx=5, pady=5)
 
         # --- Пропуски портов ---
@@ -251,13 +286,13 @@ class AutoCADApp:
         skip_list = getattr(config, "SKIP_PORTS", [])
         self.skip_ports_text.insert(tk.END, '\n'.join(skip_list))
 
-        # Жёлтый пример
+        # Жёлтая подсказка-пример
         example_frame = ttk.Frame(self.settings_frame)
         example_frame.pack(anchor=tk.W, padx=5, pady=2)
         ttk.Label(example_frame,
                   text="Формат: шкаф,номер_панели,порты\nПример (можно скопировать):").pack(anchor=tk.W)
         self.example_text = tk.Text(example_frame, height=3, width=90, wrap=tk.WORD, bg='lightyellow')
-        self.example_text.insert(tk.END, "3.1C6,1,25-29\n3.1C6,2,25-30,40")
+        self.example_text.insert(tk.END, "8.1A1,1,25-29\n8.1A1,2,25-30,40")
         self.example_text.config(state=tk.DISABLED)
         self.example_text.pack(anchor=tk.W, pady=2)
 
@@ -265,7 +300,7 @@ class AutoCADApp:
         example_menu.add_command(label="Копировать", command=self._copy_example_text)
         self.example_text.bind("<Button-3>", lambda e: example_menu.post(e.x_root, e.y_root))
 
-        # Контекстное меню для пропусков
+        # Контекстное меню для поля пропусков
         self.skip_ports_menu = tk.Menu(self.skip_ports_text, tearoff=0)
         self.skip_ports_menu.add_command(label="Копировать", command=self._copy_from_skip_ports)
         self.skip_ports_menu.add_command(label="Вставить", command=self._paste_to_skip_ports)
@@ -287,14 +322,12 @@ class AutoCADApp:
         ttk.Label(self.settings_frame, text="Особый режим (обработка после основных блоков):",
                   font=('TkDefaultFont', 10, 'bold')).pack(anchor=tk.W, padx=5, pady=(10, 5))
 
-        # Галочка включения особого режима
         self.special_enabled_var = tk.BooleanVar(
             value=getattr(config, "SPECIAL_MODE_ENABLED", False))
         tk.Checkbutton(self.settings_frame,
                        text="Обрабатывать блоки особого режима",
                        variable=self.special_enabled_var).pack(anchor=tk.W, padx=5)
 
-        # Имена блоков особого режима
         names_frame = ttk.Frame(self.settings_frame)
         names_frame.pack(anchor=tk.W, padx=5, pady=2)
         ttk.Label(names_frame, text="Имена блоков (через запятую):").pack(side=tk.LEFT)
@@ -303,7 +336,6 @@ class AutoCADApp:
         ttk.Entry(names_frame, textvariable=self.special_names_var,
                   width=55).pack(side=tk.LEFT, padx=5)
 
-        # Диапазоны портов для особого режима
         ranges_frame = ttk.Frame(self.settings_frame)
         ranges_frame.pack(anchor=tk.W, padx=5, pady=2)
         ttk.Label(ranges_frame, text="Диапазоны портов:").pack(side=tk.LEFT)
@@ -312,14 +344,12 @@ class AutoCADApp:
         ttk.Entry(ranges_frame, textvariable=self.special_ranges_var,
                   width=55).pack(side=tk.LEFT, padx=5)
 
-        # === НОВОЕ: галочка «Продолжить с последней патч-панели» ===
         self.special_continue_var = tk.BooleanVar(
             value=getattr(config, "SPECIAL_CONTINUE_LAST_PANEL", False))
         tk.Checkbutton(self.settings_frame,
                        text="Продолжить с последней патч-панели (не начинать новую)",
                        variable=self.special_continue_var).pack(anchor=tk.W, padx=5, pady=(5, 2))
 
-        # === НОВОЕ: поле «Отступить от последнего порта» ===
         skip_after_frame = ttk.Frame(self.settings_frame)
         skip_after_frame.pack(anchor=tk.W, padx=5, pady=2)
         ttk.Label(skip_after_frame,
@@ -329,9 +359,73 @@ class AutoCADApp:
         ttk.Entry(skip_after_frame, textvariable=self.special_skip_ports_var,
                   width=6).pack(side=tk.LEFT, padx=5)
 
-        # Кнопка ручного сохранения
-        ttk.Button(self.settings_frame, text="Сохранить настройки в config.py",
-                   command=self.save_settings).pack(anchor=tk.W, padx=5, pady=15)
+        # ============================================================
+        #  Расширенные настройки атрибутов и шаблона имени
+        # ============================================================
+        ttk.Label(self.settings_frame, text="Атрибуты блоков и шаблон имени:",
+                  font=('TkDefaultFont', 10, 'bold')).pack(anchor=tk.W, padx=5, pady=(15, 5))
+
+        ttk.Label(self.settings_frame,
+                  text="Имена атрибутов в блоках AutoCAD. По умолчанию: MAC, IP, NAME.",
+                  foreground="gray").pack(anchor=tk.W, padx=5, pady=(0, 5))
+
+        # Список стандартных атрибутов для выпадающих списков
+        attr_presets = ["MAC", "IP", "NAME", "ICON", "SERIAL_NUMBER"]
+
+        # --- Атрибут шкафа ---
+        tag_cabinet_frame = ttk.Frame(self.settings_frame)
+        tag_cabinet_frame.pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Label(tag_cabinet_frame, text="Атрибут с именем шкафа (TAG_CABINET):", width=38).pack(side=tk.LEFT)
+        self.tag_cabinet_var = tk.StringVar(value=getattr(config, "TAG_CABINET", "MAC"))
+        ttk.Combobox(tag_cabinet_frame, textvariable=self.tag_cabinet_var,
+                     values=attr_presets, width=18, state="normal").pack(side=tk.LEFT, padx=5)
+
+        # --- Атрибут этажа ---
+        tag_floor_frame = ttk.Frame(self.settings_frame)
+        tag_floor_frame.pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Label(tag_floor_frame, text="Атрибут с номером этажа (TAG_FLOOR):", width=38).pack(side=tk.LEFT)
+        self.tag_floor_var = tk.StringVar(value=getattr(config, "TAG_FLOOR", "IP"))
+        ttk.Combobox(tag_floor_frame, textvariable=self.tag_floor_var,
+                     values=attr_presets, width=18, state="normal").pack(side=tk.LEFT, padx=5)
+
+        # --- Атрибут имени ---
+        tag_name_frame = ttk.Frame(self.settings_frame)
+        tag_name_frame.pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Label(tag_name_frame, text="Атрибут для итогового имени (TAG_NAME):", width=38).pack(side=tk.LEFT)
+        self.tag_name_var = tk.StringVar(value=getattr(config, "TAG_NAME", "NAME"))
+        ttk.Combobox(tag_name_frame, textvariable=self.tag_name_var,
+                     values=attr_presets, width=18, state="normal").pack(side=tk.LEFT, padx=5)
+
+        # --- Атрибут иконки (на будущее) ---
+        tag_icon_frame = ttk.Frame(self.settings_frame)
+        tag_icon_frame.pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Label(tag_icon_frame, text="Атрибут типа/иконки (TAG_ICON):", width=38).pack(side=tk.LEFT)
+        self.tag_icon_var = tk.StringVar(value=getattr(config, "TAG_ICON", "ICON"))
+        ttk.Combobox(tag_icon_frame, textvariable=self.tag_icon_var,
+                     values=attr_presets, width=18, state="normal").pack(side=tk.LEFT, padx=5)
+
+        # --- Атрибут серийного номера (на будущее) ---
+        tag_serial_frame = ttk.Frame(self.settings_frame)
+        tag_serial_frame.pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Label(tag_serial_frame, text="Атрибут серийного номера (TAG_SERIAL):", width=38).pack(side=tk.LEFT)
+        self.tag_serial_var = tk.StringVar(value=getattr(config, "TAG_SERIAL", "SERIAL_NUMBER"))
+        ttk.Combobox(tag_serial_frame, textvariable=self.tag_serial_var,
+                     values=attr_presets, width=18, state="normal").pack(side=tk.LEFT, padx=5)
+
+        # --- Шаблон имени ---
+        name_format_frame = ttk.Frame(self.settings_frame)
+        name_format_frame.pack(anchor=tk.W, padx=5, pady=(10, 2))
+        ttk.Label(name_format_frame, text="Шаблон имени (NAME_FORMAT):", width=38).pack(side=tk.LEFT)
+        self.name_format_var = tk.StringVar(
+            value=getattr(config, "NAME_FORMAT", "{cabinet}/{panel:02d}.{port}"))
+        ttk.Entry(name_format_frame, textvariable=self.name_format_var,
+                  width=30).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(self.settings_frame,
+                  text="Доступные подстановки: {cabinet} — шкаф, {panel} — номер панели, "
+                       "{port} — номер порта.\n"
+                       "Пример: {cabinet}/{panel:02d}.{port} даёт имя 8.1A1/01.4",
+                  foreground="gray", justify=tk.LEFT).pack(anchor=tk.W, padx=5, pady=(0, 10))
 
     # ------------------------------------------------------------
     # Вкладка «Выполнение»
@@ -378,6 +472,7 @@ class AutoCADApp:
         name_var = tk.StringVar(value="")
         display_var = tk.StringVar(value="")
         port_var = tk.StringVar(value="")
+        poe_var = tk.BooleanVar(value=False)
 
         tk.Checkbutton(self.table_frame, variable=enabled_var).grid(row=1+i, column=0, padx=5, pady=4)
         ttk.Combobox(self.table_frame, textvariable=name_var, values=block_presets,
@@ -386,8 +481,9 @@ class AutoCADApp:
                      width=20, state="normal").grid(row=1+i, column=2, padx=5, pady=4)
         ttk.Combobox(self.table_frame, textvariable=port_var, values=port_presets,
                      width=26, state="normal").grid(row=1+i, column=3, padx=5, pady=4)
+        tk.Checkbutton(self.table_frame, variable=poe_var).grid(row=1+i, column=4, padx=5, pady=4)
 
-        self.block_rows.append((enabled_var, name_var, display_var, port_var))
+        self.block_rows.append((enabled_var, name_var, display_var, port_var, poe_var))
         self.add_row_button.grid_configure(row=1 + len(self.block_rows))
 
         self.settings_frame.update_idletasks()
@@ -439,7 +535,7 @@ class AutoCADApp:
         messagebox.showinfo(
             "О программе",
             "AutoCAD Block Numbering Tool\n"
-            "Версия 4.0\n"
+            "Версия 4.1\n"
             "Разработано Александром Хлебновым\n"
             "2026 г.\n\n"
             "Инструмент для массовой маркировки блоков AutoCAD\n"
@@ -451,18 +547,24 @@ class AutoCADApp:
     # Сохранение настроек в config.py
     # ------------------------------------------------------------
     def save_settings(self, silent=False):
+        """
+        Сохраняет текущие настройки из GUI в файл config.py рядом с exe.
+        Значения тегов атрибутов и NAME_FORMAT берутся из GUI-полей.
+        """
         try:
+            # --- Собираем BLOCK_CONFIGS из таблицы ---
             block_configs = []
-            for enabled_var, name_var, display_var, port_var in self.block_rows:
+            for enabled_var, name_var, display_var, port_var, poe_var in self.block_rows:
                 enabled = enabled_var.get()
                 name = name_var.get().strip()
                 display = display_var.get().strip()
                 port_str = port_var.get().strip()
+                poe = poe_var.get()
 
                 if not name and not port_str:
                     block_configs.append({
                         "enabled": False, "block_name": "",
-                        "display_name": "", "port_ranges": []
+                        "display_name": "", "port_ranges": [], "poe": False
                     })
                     continue
 
@@ -476,16 +578,20 @@ class AutoCADApp:
                     "block_name": name,
                     "display_name": display,
                     "port_ranges": port_ranges,
+                    "poe": bool(poe),
                 })
 
+            # --- Пропуски портов ---
             skip_text = self.skip_ports_text.get(1.0, tk.END)
             skip_list = parse_skip_ports_text(skip_text)
 
+            # --- Максимум панелей ---
             try:
                 max_panels = int(self.max_panels_var.get().strip())
             except:
                 max_panels = 20
 
+            # --- Особый режим ---
             special_enabled = self.special_enabled_var.get()
             special_names = [s.strip() for s in self.special_names_var.get().split(",") if s.strip()]
             try:
@@ -493,35 +599,64 @@ class AutoCADApp:
                                   if self.special_ranges_var.get().strip() else [])
             except:
                 special_ranges = []
-
-            # Новые параметры особого режима
             special_continue = self.special_continue_var.get()
             try:
                 special_skip = int(self.special_skip_ports_var.get().strip())
             except:
                 special_skip = 0
 
+            # --- Расширенные настройки (теги и шаблон) ---
+            tag_cabinet = self.tag_cabinet_var.get().strip() or "MAC"
+            tag_floor = self.tag_floor_var.get().strip() or "IP"
+            tag_name = self.tag_name_var.get().strip() or "NAME"
+            tag_icon = self.tag_icon_var.get().strip() or "ICON"
+            tag_serial = self.tag_serial_var.get().strip() or "SERIAL_NUMBER"
+            name_format = self.name_format_var.get().strip() or "{cabinet}/{panel:02d}.{port}"
+
+            # --- Записываем config.py ---
             config_path = os.path.join(self.config_dir, 'config.py')
             with open(config_path, 'w', encoding='utf-8') as f:
                 f.write("# ============================================================\n")
-                f.write("#  config.py – настройки программы нумерации блоков (v4.0)\n")
+                f.write("#  config.py – настройки программы нумерации блоков (v4.1)\n")
                 f.write("#  Файл автоматически сохраняется при работе из GUI.\n")
+                f.write("#  Можно редактировать вручную, но при первом же нажатии\n")
+                f.write("#  кнопки в GUI файл перезапишется значениями из интерфейса.\n")
                 f.write("# ============================================================\n\n")
-                f.write(f"TAG_CABINET = {repr(config.TAG_CABINET)}\n")
-                f.write(f"TAG_FLOOR   = {repr(config.TAG_FLOOR)}\n")
-                f.write(f"TAG_NAME    = {repr(config.TAG_NAME)}\n")
-                f.write(f"TAG_ICON    = {repr(config.TAG_ICON)}\n")
-                f.write(f"TAG_SERIAL  = {repr(config.TAG_SERIAL)}\n\n")
-                f.write(f"NAME_FORMAT = {repr(config.NAME_FORMAT)}\n\n")
+
+                f.write("# --- Общие теги атрибутов (одинаковые для всех блоков) ---\n")
+                f.write(f"TAG_CABINET = {repr(tag_cabinet)}    # атрибут с именем шкафа\n")
+                f.write(f"TAG_FLOOR   = {repr(tag_floor)}    # атрибут с номером этажа\n")
+                f.write(f"TAG_NAME    = {repr(tag_name)}    # итоговое имя блока\n")
+                f.write(f"TAG_ICON    = {repr(tag_icon)}    # на будущее (тип камеры)\n")
+                f.write(f"TAG_SERIAL  = {repr(tag_serial)}    # на будущее (серийный номер)\n\n")
+
+                f.write("# --- Шаблон итогового имени ---\n")
+                f.write(f"NAME_FORMAT = {repr(name_format)}\n\n")
+
+                f.write("# --- Максимальное количество патч-панелей в одном шкафу ---\n")
                 f.write(f"MAX_PANELS_PER_CABINET = {max_panels}\n\n")
+
+                f.write("# --- Общие пропуски портов ---\n")
+                f.write("# Формат каждой строки: \"шкаф,номер_панели,список_портов\"\n")
                 f.write("SKIP_PORTS = [\n")
                 for line in skip_list:
                     f.write(f"    {repr(line)},\n")
                 f.write("]\n\n")
+
+                f.write("# --- Список основных блоков ---\n")
+                f.write("# enabled:      True/False — участвует ли блок в обработке\n")
+                f.write("# block_name:   имя блока в AutoCAD\n")
+                f.write("# display_name: отображаемое имя для кабельного журнала\n")
+                f.write("# port_ranges:  список диапазонов портов\n")
+                f.write("# poe:          True/False — питание PoE (для кроссировочной таблицы)\n")
                 f.write("BLOCK_CONFIGS = [\n")
                 for cfg in block_configs:
                     f.write(f"    {repr(cfg)},\n")
                 f.write("]\n\n")
+
+                f.write("# ============================================================\n")
+                f.write("#  ОСОБЫЙ РЕЖИМ\n")
+                f.write("# ============================================================\n")
                 f.write(f"SPECIAL_MODE_ENABLED = {repr(special_enabled)}\n")
                 f.write(f"SPECIAL_BLOCK_NAMES = {repr(special_names)}\n")
                 f.write(f"SPECIAL_PORT_RANGES = {repr(special_ranges)}\n")
@@ -534,7 +669,10 @@ class AutoCADApp:
             if not silent:
                 messagebox.showerror("Ошибка", f"Не удалось сохранить настройки:\n{e}")
             else:
-                self.log.insert(tk.END, f"\n❌ Ошибка сохранения настроек: {e}\n")
+                try:
+                    self.log.insert(tk.END, f"\n❌ Ошибка сохранения настроек: {e}\n")
+                except:
+                    pass
 
     # ------------------------------------------------------------
     # Запуск задач
