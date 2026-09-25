@@ -1,34 +1,32 @@
 # ============================================================
-#  config.py – настройки программы нумерации блоков (v4.1)
+#  config.py – настройки программы нумерации блоков (v4.2)
 #  Файл автоматически сохраняется при работе из GUI.
-#  Можно редактировать вручную, но при первом же нажатии
-#  кнопки в GUI файл перезапишется значениями из интерфейса.
 # ============================================================
 
-# --- Общие теги атрибутов (одинаковые для всех блоков) ---
-TAG_CABINET = 'MAC'    # атрибут с именем шкафа
-TAG_FLOOR   = 'IP'    # атрибут с номером этажа
-TAG_NAME    = 'NAME'    # итоговое имя блока
-TAG_ICON    = 'ICON'    # на будущее (тип камеры)
-TAG_SERIAL  = 'SERIAL_NUMBER'    # на будущее (серийный номер)
+# --- Общие теги атрибутов ---
+TAG_CABINET = 'MAC'
+TAG_FLOOR   = 'IP'
+TAG_NAME    = 'NAME'
+TAG_ICON    = 'ICON'
+TAG_SERIAL  = 'SERIAL_NUMBER'
 
 # --- Шаблон итогового имени ---
 NAME_FORMAT = '{cabinet}/{panel:02d}.{port}'
 
-# --- Максимальное количество патч-панелей в одном шкафу ---
+# --- Максимум патч-панелей ---
 MAX_PANELS_PER_CABINET = 20
 
-# --- Общие пропуски портов ---
-# Формат каждой строки: "шкаф,номер_панели,список_портов"
+# --- Пропуски портов ---
 SKIP_PORTS = [
+    '8.1B5,1,25-30',
+    '8.1A1,1,25-30',
+    '8.1A2,1,25-30',
+    '8.1A4,1,25-30',
+    '8.1A5,1,25-30',
+    '8.1A6,1,25-30',
 ]
 
-# --- Список основных блоков ---
-# enabled:      True/False — участвует ли блок в обработке
-# block_name:   имя блока в AutoCAD
-# display_name: отображаемое имя для кабельного журнала
-# port_ranges:  список диапазонов портов
-# poe:          True/False — питание PoE (для кроссировочной таблицы)
+# --- Список блоков ---
 BLOCK_CONFIGS = [
     {'enabled': True, 'block_name': 'camera', 'display_name': 'Видеокамера', 'port_ranges': [[1, 18], [25, 42]], 'poe': True},
     {'enabled': True, 'block_name': 'AP', 'display_name': 'Точка доступа Wi-Fi', 'port_ranges': [[19, 23], [43, 47]], 'poe': True},
@@ -37,11 +35,20 @@ BLOCK_CONFIGS = [
     {'enabled': False, 'block_name': '', 'display_name': '', 'port_ranges': [], 'poe': False},
 ]
 
-# ============================================================
-#  ОСОБЫЙ РЕЖИМ
-# ============================================================
-SPECIAL_MODE_ENABLED = True
+# --- Особый режим ---
+SPECIAL_MODE_ENABLED = False
 SPECIAL_BLOCK_NAMES = ['Socket_1p', 'Socket_RJ-45']
 SPECIAL_PORT_RANGES = [[1, 23], [25, 47]]
-SPECIAL_CONTINUE_LAST_PANEL = True
-SPECIAL_SKIP_PORTS = 5
+SPECIAL_CONTINUE_LAST_PANEL = False
+SPECIAL_SKIP_PORTS = 0
+
+# --- Доназначение нового оборудования ---
+PLACEHOLDER_MARKER = 'Пустой'
+FILL_GAPS = False
+
+# --- Выноски стояков ---
+STOYAK_FRAMES_LAYER = '_WB_CAB_AREAS'
+STOYAK_LINE_FORMAT = "{count} UTP 4x2x0.5 с отм. {floor} этажа"
+STOYAK_FIRST_FLOOR_LINE = "{count} UTP 4x2x0.5 с отм. +2.500"
+STOYAK_FINAL_LINE = "на отм. 0.000"
+STOYAK_REGULAR_LINE = "{count} UTP 4x2x0.5\nна отм. 0.000"
